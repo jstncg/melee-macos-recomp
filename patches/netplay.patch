@@ -1,0 +1,102 @@
+diff --git a/tools/netplay_session.cpp b/tools/netplay_session.cpp
+index 7ef27ba..9877230 100644
+--- a/tools/netplay_session.cpp
++++ b/tools/netplay_session.cpp
+@@ -35,6 +35,10 @@
+ #include <utility>
+ #include <vector>
+ 
++#ifdef __APPLE__
++extern "C" void MeleeInitializeApplication();
++#endif
++
+ namespace fs = std::filesystem;
+ 
+ namespace moderngekko::frontend {
+@@ -270,12 +274,15 @@ public:
+ #if defined(__linux__)
+     SDL_SetHint(SDL_HINT_VIDEO_DRIVER,
+                 window_system == WindowSystem::Wayland ? "wayland" : "x11");
++#endif
++#ifdef __APPLE__
++    MeleeInitializeApplication();
+ #endif
+     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD))
+       return false;
+     const float scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+     m_window = SDL_CreateWindow(
+-        "KirbyRecomp Netplay Lobby", static_cast<int>(820 * scale),
++        "Melee Netplay Lobby", static_cast<int>(820 * scale),
+         static_cast<int>(600 * scale),
+         SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+     if (!m_window)
+@@ -358,6 +365,7 @@ bool RunLobbyWindow(RuntimeConfig &runtime_config,
+   std::vector<ControllerOption> available = EnumerateControllers();
+   auto last_refresh = std::chrono::steady_clock::now();
+   bool running = true;
++  bool smoke_start_requested = false;
+   while (running) {
+     if (!window.Frame())
+       break;
+@@ -370,7 +378,7 @@ bool RunLobbyWindow(RuntimeConfig &runtime_config,
+ 
+     const std::vector<NetPlay::Player> players = client.GetPlayersSnapshot();
+     const NetPlay::PadMappingArray wiimote_mapping =
+-        client.GetWiimoteMappingSnapshot();
++        client.GetPadMappingSnapshot();
+     const u8 assigned = client.GetAssignedControllerCount();
+     if (assigned > 0 && options.controllers.size() > assigned) {
+       options.controllers.resize(assigned);
+@@ -380,6 +388,17 @@ bool RunLobbyWindow(RuntimeConfig &runtime_config,
+       SaveConfig(runtime_config.user_directory, frontend_config, &ignored);
+     }
+ 
++    // Opt-in integration testing: normal rooms always require explicit Ready/Start.
++    if (std::getenv("MELEE_NETPLAY_SMOKE")) {
++      for (const auto& player : players)
++        if (player.pid == client.GetLocalPlayerId() && !player.ready &&
++            player.game_status == NetPlay::SyncIdentifierComparison::SameGame)
++          client.SetReady(true);
++      if (server && !smoke_start_requested && server->CanStart()) {
++        smoke_start_requested = true;
++        server->RequestStartGame();
++      }
++    }
+     if (ui.TakeStartRequest())
+       client.StartGame(runtime_config.game_root.string() + "/sys/main.dol");
+     auto boot_data = ui.TakeBootData();
+@@ -430,7 +449,7 @@ bool RunLobbyWindow(RuntimeConfig &runtime_config,
+             continue;
+           if (!slots.empty())
+             slots += ", ";
+-          slots += "Wii " + std::to_string(i + 1);
++          slots += "Port " + std::to_string(i + 1);
+         }
+         ImGui::TextUnformatted(slots.empty() ? "None" : slots.c_str());
+         ImGui::TableSetColumnIndex(3);
+@@ -445,7 +464,7 @@ bool RunLobbyWindow(RuntimeConfig &runtime_config,
+     }
+ 
+     ImGui::Spacing();
+-    ImGui::TextUnformatted("Local sideways Wii Remotes");
++    ImGui::TextUnformatted("Local GameCube controllers");
+     std::size_t total_assigned = 0;
+     for (const NetPlay::Player &player : players)
+       total_assigned += player.controller_count;
+@@ -464,7 +483,7 @@ bool RunLobbyWindow(RuntimeConfig &runtime_config,
+         frontend_config.controllers = options.controllers;
+         frontend_config.controller = options.controllers.front();
+         std::string error;
+-        if (GenerateControllerConfig(runtime_config.user_directory,
++        if (EnsureControllerConfig(runtime_config.user_directory,
+                                      options.controllers, &error) &&
+             SaveConfig(runtime_config.user_directory, frontend_config,
+                        &error)) {
+@@ -567,6 +586,7 @@ int RunNetplayLobby(RuntimeConfig runtime_config, ConfigResult frontend_config,
+       UICommon::Shutdown();
+       return static_cast<int>(NetplayExitCode::Failed);
+     }
++    server->SetGameCubeControllerMode(true);
+     server->SetHostInputAuthority(false);
+     server->SetAdaptiveBuffer(options.buffer == "auto");
+     if (options.buffer != "auto")

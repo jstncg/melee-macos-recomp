@@ -1,0 +1,1 @@
+Optional: place your own icon artwork here as `AppIcon.png` (square PNG, ideally 1024×1024). The packager creates an ICNS when present. Artwork is ignored by Git and is not required to build or run. No game logo artwork is distributed.

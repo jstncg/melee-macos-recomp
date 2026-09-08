@@ -1,0 +1,474 @@
+diff --git a/Source/Core/AudioCommon/CubebStream.cpp b/Source/Core/AudioCommon/CubebStream.cpp
+index 0cdf7f3..4778142 100644
+--- a/Source/Core/AudioCommon/CubebStream.cpp
++++ b/Source/Core/AudioCommon/CubebStream.cpp
+@@ -223,7 +223,8 @@ void CubebStream::SetVolume(int volume)
+     return;
+   m_work_queue.PushBlocking([this, volume] {
+ #endif
+-    cubeb_stream_set_volume(m_stream, volume / 100.0f);
++    const int result = cubeb_stream_set_volume(m_stream, volume / 100.0f);
++    std::fprintf(stderr,"[melee audio] Cubeb volume: %d%% (result %d)\n",volume,result);
+ #ifdef _WIN32
+   });
+ #endif
+diff --git a/Source/Core/Common/FileUtil.cpp b/Source/Core/Common/FileUtil.cpp
+index 6d2853b..5767f63 100644
+--- a/Source/Core/Common/FileUtil.cpp
++++ b/Source/Core/Common/FileUtil.cpp
+@@ -773,7 +773,10 @@ static std::string CreateSysDirectoryPath()
+ #endif
+ 
+ #if defined(__APPLE__)
+-  const std::string sys_directory = GetBundleDirectory() + DIR_SEP SYSDATA_DIR DIR_SEP;
++  std::string sys_directory = GetBundleDirectory() + DIR_SEP SYSDATA_DIR DIR_SEP;
++  const std::string app_resources = GetBundleDirectory() + "/Contents/Resources/Sys/";
++  if (IsDirectory(app_resources))
++    sys_directory = app_resources;
+ #elif defined(_WIN32) || defined(LINUX_LOCAL_DEV)
+   const std::string sys_directory = GetExeDirectory() + DIR_SEP SYSDATA_DIR DIR_SEP;
+ #elif defined ANDROID
+diff --git a/Source/Core/Core/HW/GCPad.cpp b/Source/Core/Core/HW/GCPad.cpp
+index 188882c..e659362 100644
+--- a/Source/Core/Core/HW/GCPad.cpp
++++ b/Source/Core/Core/HW/GCPad.cpp
+@@ -1,3 +1,5 @@
++#include <atomic>
++std::atomic<bool> g_melee_menu_open{false};
+ // Copyright 2010 Dolphin Emulator Project
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
+@@ -55,6 +57,7 @@ bool IsInitialized()
+ 
+ GCPadStatus GetStatus(int pad_num)
+ {
++  if (g_melee_menu_open) return GCPadStatus{};
+   return static_cast<GCPad*>(s_config.GetController(pad_num))->GetInput();
+ }
+ 
+diff --git a/Source/Core/Core/NetPlay/NetPlayClient.cpp b/Source/Core/Core/NetPlay/NetPlayClient.cpp
+index a55e7cf..7367f74 100644
+--- a/Source/Core/Core/NetPlay/NetPlayClient.cpp
++++ b/Source/Core/Core/NetPlay/NetPlayClient.cpp
+@@ -1240,6 +1240,12 @@ std::vector<Player> NetPlayClient::GetPlayersSnapshot()
+   return players;
+ }
+ 
++PadMappingArray NetPlayClient::GetPadMappingSnapshot()
++{
++  std::lock_guard lkg(m_crit.game);
++  return m_pad_map;
++}
++
+ PadMappingArray NetPlayClient::GetWiimoteMappingSnapshot()
+ {
+   std::lock_guard lkg(m_crit.game);
+diff --git a/Source/Core/Core/NetPlay/NetPlayClient.h b/Source/Core/Core/NetPlay/NetPlayClient.h
+index 4fcd84d..dc19e16 100644
+--- a/Source/Core/Core/NetPlay/NetPlayClient.h
++++ b/Source/Core/Core/NetPlay/NetPlayClient.h
+@@ -132,6 +132,7 @@ public:
+   std::vector<const Player*> GetPlayers();
+   std::vector<Player> GetPlayersSnapshot();
+   PadMappingArray GetWiimoteMappingSnapshot();
++  PadMappingArray GetPadMappingSnapshot();
+   const NetSettings& GetNetSettings() const;
+ 
+   // Called from the GUI thread.
+diff --git a/Source/Core/Core/NetPlay/NetPlayServer.cpp b/Source/Core/Core/NetPlay/NetPlayServer.cpp
+index 7b2ee1e..6e88512 100644
+--- a/Source/Core/Core/NetPlay/NetPlayServer.cpp
++++ b/Source/Core/Core/NetPlay/NetPlayServer.cpp
+@@ -482,7 +482,7 @@ ConnectionError NetPlayServer::OnConnect(ENetPeer* incoming_connection, sf::Pack
+     return ConnectionError::CompatibilityMismatch;
+ 
+   const std::size_t occupied_controllers =
+-      std::ranges::count_if(m_wiimote_map, [](PlayerId pid) { return pid != 0; });
++      std::ranges::count_if((m_gamecube_controllers.load() ? m_pad_map : m_wiimote_map), [](PlayerId pid) { return pid != 0; });
+   const std::size_t available_controllers = 4 - occupied_controllers;
+   if (requested_controllers == 0 || requested_controllers > 4 || available_controllers == 0)
+     return ConnectionError::RoomFull;
+@@ -501,7 +501,7 @@ ConnectionError NetPlayServer::OnConnect(ENetPeer* incoming_connection, sf::Pack
+   // force a ping on first netplay loop
+   m_update_pings = true;
+ 
+-  for (PlayerId& mapping : m_wiimote_map)
++  for (PlayerId& mapping : (m_gamecube_controllers.load() ? m_pad_map : m_wiimote_map))
+   {
+     if (mapping == 0 && requested_controllers > 0)
+     {
+@@ -678,17 +678,17 @@ void NetPlayServer::SetControllerCount(Client& player, u8 requested_count)
+     return;
+ 
+   std::lock_guard lkp(m_crit.players);
+-  for (PlayerId& mapping : m_wiimote_map)
++  for (PlayerId& mapping : (m_gamecube_controllers.load() ? m_pad_map : m_wiimote_map))
+   {
+     if (mapping == player.pid)
+       mapping = 0;
+   }
+ 
+   const u8 available =
+-      static_cast<u8>(std::ranges::count_if(m_wiimote_map, [](PlayerId pid) { return pid == 0; }));
++      static_cast<u8>(std::ranges::count_if((m_gamecube_controllers.load() ? m_pad_map : m_wiimote_map), [](PlayerId pid) { return pid == 0; }));
+   const u8 assigned = std::min<u8>({requested_count, available, 4});
+   u8 remaining = assigned;
+-  for (PlayerId& mapping : m_wiimote_map)
++  for (PlayerId& mapping : (m_gamecube_controllers.load() ? m_pad_map : m_wiimote_map))
+   {
+     if (mapping == 0 && remaining > 0)
+     {
+@@ -699,6 +699,7 @@ void NetPlayServer::SetControllerCount(Client& player, u8 requested_count)
+ 
+   player.controller_count = assigned;
+   player.ready = false;
++  UpdatePadMapping();
+   UpdateWiimoteMapping();
+   SendPlayerState(player);
+ }
+@@ -717,7 +718,7 @@ bool NetPlayServer::CanStart()
+ {
+   std::lock_guard lkp(m_crit.players);
+   const std::size_t occupied =
+-      std::ranges::count_if(m_wiimote_map, [](PlayerId pid) { return pid != 0; });
++      std::ranges::count_if((m_gamecube_controllers.load() ? m_pad_map : m_wiimote_map), [](PlayerId pid) { return pid != 0; });
+   return occupied >= 2 && !m_players.empty() &&
+          std::ranges::all_of(m_players, [](const auto& entry) {
+            return entry.second.ready && entry.second.controller_count > 0 &&
+diff --git a/Source/Core/Core/NetPlay/NetPlayServer.h b/Source/Core/Core/NetPlay/NetPlayServer.h
+index 7df2e61..3ef9e3d 100644
+--- a/Source/Core/Core/NetPlay/NetPlayServer.h
++++ b/Source/Core/Core/NetPlay/NetPlayServer.h
+@@ -54,6 +54,8 @@ public:
+   bool RequestStartGame();
+   void AbortGameStart();
+ 
++  void SetGameCubeControllerMode(bool enabled) { m_gamecube_controllers.store(enabled); }
++  std::atomic<bool> m_gamecube_controllers{false};
+   PadMappingArray GetPadMapping() const;
+   void SetPadMapping(const PadMappingArray& mappings);
+ 
+diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
+index e3581cc..d7098a1 100644
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
+@@ -146,6 +146,8 @@ StaticRecompCore::~StaticRecompCore() = default;
+ void StaticRecompCore::Init()
+ {
+   g_static_recomp_core = this;
++  const char* strict = std::getenv("MELEE_STRICT_NATIVE");
++  m_strict_native = strict && strict[0] == '1';
+   RefreshConfig();
+   m_collect_dispatch_samples = std::getenv("STATICRECOMP_DISPATCH_SAMPLES") != nullptr;
+   const char* fallback_override = std::getenv("STATICRECOMP_FALLBACK_RANGES");
+@@ -185,6 +187,11 @@ void StaticRecompCore::Init()
+   m_lockstep_verifier = std::make_unique<StaticRecompLockstep::StaticRecompLockstepVerifier>(*this);
+   m_lockstep_verifier->Init();
+ 
++  if (m_strict_native)
++  {
++    std::fprintf(stderr, "[staticrecomp] strict native mode: JIT and interpreter fallback prohibited\n");
++    return;
++  }
+ #ifdef _M_ARM_64
+   m_fallback_jit = std::make_unique<JitArm64>(m_system);
+ #elif defined(_M_X86_64)
+diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
+index d084fea..ade0066 100644
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
+@@ -170,6 +170,8 @@ private:
+   std::unique_ptr<JitBase> m_fallback_jit;
+ 
+   u64 m_native_dispatches = 0;
++  bool HandleMeleeVector();
++  bool m_strict_native = false;
+   u64 m_fallback_steps = 0;
+   u64 m_native_exceptions = 0;
+   u64 m_hook_fallback_instructions = 0;
+diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Hooks.cpp b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Hooks.cpp
+index 7b3d845..bd6a4ef 100644
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Hooks.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Hooks.cpp
+@@ -13,6 +13,7 @@
+ #include "Common/Logging/Log.h"
+ 
+ #include <cstdio>
++#include <cstdlib>
+ 
+ namespace
+ {
+@@ -405,6 +406,12 @@ void StaticRecompCore::HookInstructionFallback(CPUState* cpu, u32 raw, u32 cia)
+     }
+   }
+ 
++  if (core->m_strict_native)
++  {
++    std::fprintf(stderr, "[staticrecomp] STRICT FAILURE: instruction 0x%08X at 0x%08X\n", raw, cia);
++    std::_Exit(87);
++  }
++
+   // The recompiled segment resumes via the dispatcher at the PC this leaves
+   // behind, so this must execute exactly the instruction at cia via
+   // Dolphin's interpreter and hand the register state back.
+@@ -414,3 +421,76 @@ void StaticRecompCore::HookInstructionFallback(CPUState* cpu, u32 raw, u32 cia)
+   ppc.downcount -= system.GetInterpreter().SingleStepInner();
+   core->SyncIn();
+ }
++
++// Native OS vector services for the validated GALE01 revision 2 build.
++// The game installs copies below its DOL. Verify the installed instructions
++// against their original DOL templates before handling them natively.
++bool StaticRecompCore::HandleMeleeVector()
++{
++  if (!m_module || std::string_view(m_module->game_id) != "GALE01")
++    return false;
++  auto& ppc = m_system.GetPPCState();
++  const u32 vector = ppc.pc & ~0x80000000u;
++  static constexpr u32 vectors[] = {0x100,0x200,0x300,0x400,0x500,0x600,0x700,
++                                   0x800,0x900,0xc00,0xd00,0xf00,0x1300,0x1400,0x1700};
++  int number = -1;
++  for (int i = 0; i < 15; ++i)
++    if (vector == vectors[i]) number = i;
++  if (number < 0 || !m_guest.ram || m_guest.ram_size < 0x34aba0)
++    return false;
++  const auto read = [this](u32 address) {
++    const u8* p = m_guest.ram + address;
++    return (u32(p[0]) << 24) | (u32(p[1]) << 16) | (u32(p[2]) << 8) | p[3];
++  };
++  const bool syscall = vector == 0xc00;
++  const u32 source = syscall ? 0x34ab80 : 0x3435e4;
++  const u32 length = syscall ? 0x1c : 0x98;
++  for (u32 offset = 0; offset < length; offset += 4)
++  {
++    u32 expected = read(source + offset);
++    if (!syscall && offset == 0x68) expected = (expected & 0xffff0000u) | u32(number);
++    if (read(vector + offset) != expected)
++      return false;
++  }
++  SyncIn();
++  if (syscall)
++  {
++    m_guest.gpr[9] = HookSPRRead(&m_guest, SPR_HID0, vector);
++    m_guest.gpr[10] = m_guest.gpr[9] | 8u;
++    HookSPRWrite(&m_guest, SPR_HID0, m_guest.gpr[10], vector + 8);
++    HookSPRWrite(&m_guest, SPR_HID0, m_guest.gpr[9], vector + 20);
++  }
++  else
++  {
++    // Straight-line translation of OSExceptionVector in the supplied decomp.
++    const u32 old_r4 = m_guest.gpr[4];
++    HookSPRWrite(&m_guest, SPR_SPRG0, old_r4, vector);
++    m_guest.gpr[4] = u32(HookExternalRead(&m_guest, 0xc0, 4));
++    const u32 context = m_guest.gpr[4];
++    HookExternalWrite(&m_guest, context + 12, m_guest.gpr[3], 4);
++    HookExternalWrite(&m_guest, context + 16, old_r4, 4);
++    HookExternalWrite(&m_guest, context + 20, m_guest.gpr[5], 4);
++    HookExternalWrite(&m_guest, context + 418, HookExternalRead(&m_guest, context + 418, 2) | 2u, 2);
++    HookExternalWrite(&m_guest, context + 128, m_guest.cr, 4);
++    HookExternalWrite(&m_guest, context + 132, m_guest.lr, 4);
++    HookExternalWrite(&m_guest, context + 136, m_guest.ctr, 4);
++    HookExternalWrite(&m_guest, context + 140, m_guest.xer, 4);
++    HookExternalWrite(&m_guest, context + 408, m_guest.srr0, 4);
++    HookExternalWrite(&m_guest, context + 412, m_guest.srr1, 4);
++    const bool recoverable = (m_guest.srr1 & 2u) != 0;
++    m_guest.srr1 = m_guest.msr | 0x30u;
++    m_guest.gpr[3] = u32(number);
++    m_guest.gpr[4] = u32(HookExternalRead(&m_guest, 0xd4, 4));
++    m_guest.cr = (m_guest.cr & 0x0fffffffu) |
++      ((recoverable ? 4u : 2u) | ((m_guest.xer >> 31) & 1u)) << 28;
++    m_guest.gpr[5] = recoverable ? u32(HookExternalRead(&m_guest, 0x3000 + 4u * number, 4)) : 0x80343680u;
++    m_guest.srr0 = m_guest.gpr[5];
++  }
++  // rfi semantics: restore SRR1's defined bits, clear POW, branch to SRR0.
++  m_guest.msr = ((m_guest.msr & ~0x87c0ffffu) | (m_guest.srr1 & 0x87c0ffffu)) & ~0x00040000u;
++  m_guest.pc = m_guest.srr0 & ~3u;
++  m_guest.downcount = -(syscall ? 12 : 38);
++  SyncOut();
++  ++m_native_dispatches;
++  return true;
++}
+diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
+index d91ec2d..1d8b292 100644
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
+@@ -71,7 +71,9 @@ void StaticRecompCore::Run()
+       return false;
+ 
+     int lookup_index = -1;
+-    if (address >= 0x80000000u && address < 0x80000000u + m_lookup_ram_size)
++    if (address < m_lookup_ram_size)
++      lookup_index = static_cast<int>(address >> 2);
++    else if (address >= 0x80000000u && address < 0x80000000u + m_lookup_ram_size)
+     {
+       lookup_index = static_cast<int>((address - 0x80000000u) >> 2);
+     }
+@@ -125,6 +127,8 @@ void StaticRecompCore::Run()
+ 
+     do
+     {
++      if (m_module_active && HandleMeleeVector())
++        continue;
+       // MSR.FP needs no gate here: generated FPU instructions raise the
+       // FP-unavailable exception themselves (ppc_fp_available).
+       if (m_module_active && DispatchableAt(ppc.pc) &&
+@@ -240,6 +244,11 @@ void StaticRecompCore::Run()
+             m_host_call_passthrough = true;
+           }
+         }
++        if (m_strict_native)
++        {
++          std::fprintf(stderr, "[staticrecomp] STRICT FAILURE: uncovered PC 0x%08X\n", ppc.pc);
++          std::_Exit(86);
++        }
+         // SingleStepInner delivers synchronous exceptions itself; external
+         // interrupts are delivered at slice start, as in Interpreter::Run.
+         if (m_module_active && IsForcedFallbackAddress(ppc.pc))
+diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_SMC.cpp b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_SMC.cpp
+index 491c57e..37b5394 100644
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_SMC.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_SMC.cpp
+@@ -160,6 +160,8 @@ u32 StaticRecompCore::TranslateRelAddress(u32 linked_address)
+ 
+ int StaticRecompCore::GetAddressLookupIndex(u32 address) const
+ {
++  if (address < m_lookup_ram_size)
++    return static_cast<int>(address >> 2);
+   if (address >= 0x80000000u && address < 0x80000000u + m_lookup_ram_size)
+     return static_cast<int>((address - 0x80000000u) >> 2);
+   if (address >= 0x90000000u && address < 0x90000000u + m_lookup_exram_size)
+diff --git a/Source/Core/DolphinNoGUI/PlatformMacos.mm b/Source/Core/DolphinNoGUI/PlatformMacos.mm
+index e942282..ff07008 100644
+--- a/Source/Core/DolphinNoGUI/PlatformMacos.mm
++++ b/Source/Core/DolphinNoGUI/PlatformMacos.mm
+@@ -80,6 +80,8 @@
+ }
+ @end
+ 
++extern "C" void MeleeInitializeApplication() { [Application sharedApplication]; }
++
+ @interface AppDelegate : NSObject <NSApplicationDelegate>
+ 
+ @property(readonly) Platform* platform;
+@@ -89,6 +91,11 @@
+ @end
+ 
+ @implementation AppDelegate
++- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender
++{
++  [static_cast<Application*>(sender) shutdown];
++  return NSTerminateCancel; // The runtime main loop performs orderly shutdown.
++}
+ - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)sender
+ {
+   return YES;
+@@ -162,6 +169,8 @@
+ }
+ @end
+ 
++#include "MeleeFrontend.inc"
++
+ namespace
+ {
+ class PlatformMacOS : public Platform
+@@ -184,6 +193,7 @@ private:
+ 
+   NSRect m_window_rect;
+   NSWindow* m_window;
++  MeleeFrontend* m_frontend;
+   NSMenu* menuBar;
+   AppDelegate* m_app_delegate;
+   WindowDelegate* m_window_delegate;
+@@ -214,6 +224,12 @@ bool PlatformMacOS::Init()
+   unsigned long styleMask =
+       NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable;
+ 
++  if (m_window_width < 320 || m_window_height < 240)
++  {
++    m_window_width = 960;
++    m_window_height = 792;
++    m_window_x = m_window_y = -1;
++  }
+   m_window_rect = CGRectMake(m_window_x, m_window_y, m_window_width, m_window_height);
+   m_window = [NSWindow alloc];
+   m_window = [m_window initWithContentRect:m_window_rect
+@@ -224,6 +240,7 @@ bool PlatformMacOS::Init()
+   {
+     [m_window center];
+   }
++  [m_window setContentMinSize:NSMakeSize(320, 264)];
+   m_window_delegate = [[WindowDelegate alloc] init];
+   [m_window setDelegate:m_window_delegate];
+ 
+@@ -262,6 +279,8 @@ bool PlatformMacOS::Init()
+   [m_window setTitle:@"Dolphin-emu-nogui"];
+ 
+   SetupMenu();
++  if (getenv("MELEE_FRONTEND"))
++    m_frontend = [[MeleeFrontend alloc] initWithGame:m_window];
+ 
+   return true;
+ }
+@@ -311,7 +330,22 @@ void PlatformMacOS::ProcessEvents()
+                                            inMode:NSDefaultRunLoopMode
+                                           dequeue:YES];
+ 
+-    [NSApp sendEvent:event];
++    bool handled = false;
++    if (m_frontend && event.type == NSEventTypeKeyDown && !event.isARepeat)
++    {
++      if (event.keyCode == 53)
++      {
++        if (m_frontend.panel.isVisible) [m_frontend play:nil];
++        else [m_frontend home:nil];
++        handled = true;
++      }
++      else if (event.keyCode == 43 && (event.modifierFlags & NSEventModifierFlagCommand))
++      {
++        [m_frontend settings:nil];
++        handled = true;
++      }
++    }
++    if (!handled) [NSApp sendEvent:event];
+ 
+     // Need to update if m_window becomes fullscreen
+     m_window_fullscreen = [m_window styleMask] & NSWindowStyleMaskFullScreen;
+diff --git a/Source/Core/VideoBackends/Metal/MTLGfx.mm b/Source/Core/VideoBackends/Metal/MTLGfx.mm
+index 4b744fe..2a71821 100644
+--- a/Source/Core/VideoBackends/Metal/MTLGfx.mm
++++ b/Source/Core/VideoBackends/Metal/MTLGfx.mm
+@@ -455,6 +455,8 @@ bool Metal::Gfx::BindBackbuffer(const ClearColor& clear_color)
+     CheckForSurfaceChange();
+     CheckForSurfaceResize();
+     m_drawable = MRCRetain([m_layer nextDrawable]);
++    if (!m_drawable)
++      return false;
+     m_backbuffer->UpdateBackbufferTexture([m_drawable texture]);
+     SetAndClearFramebuffer(m_backbuffer.get(), clear_color);
+     return m_drawable != nullptr;
+diff --git a/Source/Core/VideoBackends/Metal/MTLTexture.mm b/Source/Core/VideoBackends/Metal/MTLTexture.mm
+index 4358d29..9fde26a 100644
+--- a/Source/Core/VideoBackends/Metal/MTLTexture.mm
++++ b/Source/Core/VideoBackends/Metal/MTLTexture.mm
+@@ -189,7 +189,7 @@ void Metal::StagingTexture::Flush()
+   m_wait_buffer = nullptr;
+ }
+ 
+-static void InitDesc(id desc, AbstractTexture* tex)
++static void InitDesc(MTLRenderPassAttachmentDescriptor* desc, AbstractTexture* tex)
+ {
+   [desc setTexture:static_cast<Metal::Texture*>(tex)->GetMTLTexture()];
+   [desc setLoadAction:MTLLoadActionLoad];
+diff --git a/Source/Core/VideoCommon/FramebufferManager.cpp b/Source/Core/VideoCommon/FramebufferManager.cpp
+index 6277598..4c16ca9 100644
+--- a/Source/Core/VideoCommon/FramebufferManager.cpp
++++ b/Source/Core/VideoCommon/FramebufferManager.cpp
+@@ -249,6 +249,8 @@ bool FramebufferManager::CreateEFBFramebuffer(int efb_scale)
+   if (!m_efb_framebuffer || !m_efb_convert_framebuffer)
+     return false;
+ 
++  std::fprintf(stderr,"[melee video] EFB allocated: %u x %u (scale %.0f)\n",width,height,m_efb_scale);
++
+   // Create resolved textures if MSAA is on
+   if (g_ActiveConfig.MultisamplingEnabled())
+   {

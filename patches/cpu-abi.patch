@@ -1,0 +1,36 @@
+diff --git a/include/moderngekko/cpu_state.h b/include/moderngekko/cpu_state.h
+index 24fb92a..bdc78ee 100644
+--- a/include/moderngekko/cpu_state.h
++++ b/include/moderngekko/cpu_state.h
+@@ -8,7 +8,7 @@
+ extern "C" {
+ #endif
+ 
+-#define MODERNGEKKO_CPU_ABI_VERSION 4u
++#define MODERNGEKKO_CPU_ABI_VERSION 3u
+ #define GXRUNTIME_CPU_ABI_VERSION MODERNGEKKO_CPU_ABI_VERSION
+ 
+ typedef struct CPUState CPUState;
+@@ -72,7 +72,6 @@ struct CPUState
+     uint32_t ram_size;
+     PPCExternalPointer external_pointer;
+     int64_t downcount;
+-    int64_t cycle_budget;
+     uint8_t* exram;
+     uint32_t exram_size;
+     PPCSPRRead spr_read;
+diff --git a/tools/moderngekko_run.cpp b/tools/moderngekko_run.cpp
+index d6b3569..6431d1a 100644
+--- a/tools/moderngekko_run.cpp
++++ b/tools/moderngekko_run.cpp
+@@ -192,7 +192,10 @@ int RunMain(int argc, char **argv) {
+     else if (arg == "--mute")
+       config.audio.mute = true;
+     else if (arg == "--automation-dir")
++    {
+       config.automation.directory = value("--automation-dir");
++      config.input.background_input = true;
++    }
+     else if (arg == "--headless")
+       config.headless = true;
+     else if (arg == "--allow-interpreter")

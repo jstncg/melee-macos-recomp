@@ -1,0 +1,22 @@
+diff --git a/src/runtime/dolphin_runtime.cpp b/src/runtime/dolphin_runtime.cpp
+index f9b5405..56b628d 100644
+--- a/src/runtime/dolphin_runtime.cpp
++++ b/src/runtime/dolphin_runtime.cpp
+@@ -1,3 +1,6 @@
++#ifdef MODERNGEKKO_HAVE_COCOA
++extern "C" void MeleeApplyMediaPreferences();
++#endif
+ #include "moderngekko/runtime.hpp"
+ 
+ #include "AudioCommon/AudioCommon.h"
+@@ -691,6 +694,10 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+   Config::SetBase(Config::MAIN_INPUT_BACKGROUND_INPUT,
+                   impl->config.input.background_input);
+ 
++#ifdef MODERNGEKKO_HAVE_COCOA
++  MeleeApplyMediaPreferences();
++  if (impl->config.audio.mute) Config::SetCurrent(Config::MAIN_AUDIO_VOLUME,0);
++#endif
+   auto &jit = Core::System::GetInstance().GetJitInterface();
+   StaticRecompModuleSource recomp_source;
+   if (impl->config.module.kind == ModuleSource::Kind::DynamicPath)

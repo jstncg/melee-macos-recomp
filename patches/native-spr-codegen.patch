@@ -1,0 +1,30 @@
+diff --git a/src/backend/emitter.c b/src/backend/emitter.c
+index 45c3286..181f926 100644
+--- a/src/backend/emitter.c
++++ b/src/backend/emitter.c
+@@ -1801,8 +1801,10 @@ static void emit_instruction_with_range(FILE* out, const PPCInst* inst,
+         case 282: fprintf(out, "    ctx->gpr[%u] = ctx->ear;\n", inst->rD); break;
+         case 920: fprintf(out, "    ctx->gpr[%u] = ctx->hid2;\n", inst->rD); break;
+         default:
+-            fprintf(out, "    ppc_fallback_instruction(ctx, 0x%08Xu, 0x%08Xu);\n",
+-                    inst->raw, inst->address);
++            fprintf(out, "    ctx->gpr[%u] = ppc_mfspr(ctx, %uu, 0x%08Xu);\n",
++                    inst->rD, inst->spr, inst->address);
++            fprintf(out, "    ctx->downcount -= 1;\n");
++            fprintf(out, "    if (!ctx->exception) ctx->pc = 0x%08Xu;\n", inst->address + 4);
+             fprintf(out, "    return;\n");
+             break;
+         }
+@@ -1826,8 +1828,10 @@ static void emit_instruction_with_range(FILE* out, const PPCInst* inst,
+         case 919: fprintf(out, "    ctx->gqr[7] = ctx->gpr[%u];\n", inst->rS); break;
+         case 920: fprintf(out, "    ctx->hid2 = ctx->gpr[%u];\n", inst->rS); break;
+         default:
+-            fprintf(out, "    ppc_fallback_instruction(ctx, 0x%08Xu, 0x%08Xu);\n",
+-                    inst->raw, inst->address);
++            fprintf(out, "    ppc_mtspr(ctx, %uu, ctx->gpr[%u], 0x%08Xu);\n",
++                    inst->spr, inst->rS, inst->address);
++            fprintf(out, "    ctx->downcount -= 2;\n");
++            fprintf(out, "    if (!ctx->exception) ctx->pc = 0x%08Xu;\n", inst->address + 4);
+             fprintf(out, "    return;\n");
+             break;
+         }
