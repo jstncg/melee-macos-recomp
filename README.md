@@ -55,7 +55,7 @@ There is no prebuilt game binary to download: each user generates it locally.
 2. Install [Homebrew](https://brew.sh/) if you do not already have it. Clone this repo:
 
    ```sh
-   git clone https://github.com/McDandle/melee-macos-recomp.git
+   git clone https://github.com/jstncg/melee-macos-recomp.git
    cd melee-macos-recomp
    brew bundle --file Brewfile
    export PATH="/opt/homebrew/bin:$PATH"

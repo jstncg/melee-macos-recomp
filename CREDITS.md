@@ -29,3 +29,7 @@ that its aggregate source is GPLv3-compatible, with individual files and externa
 dependencies carrying their own notices/licenses. This repository preserves patch
 context notices and supplies GPLv3 text in LICENSE; it does not relicense dependency
 code or claim ownership of game data or artwork.
+# Project lineage
+
+This repository builds on [McDandle/melee-macos-recomp](https://github.com/McDandle/melee-macos-recomp),
+preserving its source history and adding paired phone controllers and launch workflows.
