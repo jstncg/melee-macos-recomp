@@ -28,6 +28,11 @@ if [[ "$(git -C "$TEMPLATE" rev-parse HEAD)" != eedda2b02dde3aefc02796d859f0033b
   exit 1
 fi
 git -C "$TEMPLATE" submodule update --init --recursive
+SDL="$DOLPHIN/Externals/SDL/SDL"
+if ! git -C "$SDL" apply --reverse --check "$ROOT/patches/sdl-virtual-joystick.patch" 2>/dev/null; then
+  git -C "$SDL" apply --check "$ROOT/patches/sdl-virtual-joystick.patch"
+  git -C "$SDL" apply "$ROOT/patches/sdl-virtual-joystick.patch"
+fi
 if git -C "$DOLPHIN" apply --reverse --check "$ROOT/patches/strict-native.patch" 2>/dev/null; then
   : # Local verification patch is already applied.
 else

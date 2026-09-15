@@ -25,6 +25,8 @@ game data. It is not affiliated with or endorsed by Nintendo.
 - Memory-card saves, settings, save-state controls, and validated local disc import.
 - Experimental direct-connect netplay with Host/Join, Ready/Start, compatibility
   checks, GameCube port assignment, and automatic input-buffer adjustment.
+- Phone-browser touch controllers with paired local connections and a combined
+  local/host/join launcher. See [Phone controllers](phonepad/README.md).
 
 Gameplay remains approximately **60 FPS**. Higher internal resolution sharpens
 3D edges; it does not add detail to movies or original textures. True 120 FPS
@@ -89,6 +91,27 @@ For a CLI launch without Home, use `./scripts/run_macos.sh`.
 
 ## Controls and settings
 
+### Use a phone as your controller
+
+After building the game:
+
+```sh
+./scripts/setup_phonepad.sh
+./scripts/play_phones.sh --check
+./scripts/play_phones.sh local
+```
+
+Open the complete pairing link printed in the terminal on a phone connected to
+your Mac's Wi-Fi. For a private online game, the host runs
+`./scripts/play_phones.sh host --nickname Host`; the friend runs
+`./scripts/play_phones.sh join HOST_ADDRESS --nickname Friend`. Each phone pairs
+with its own Mac. Across networks, use a shared VPN or forward the host's netplay
+UDP port (default 2626). This launcher uses separate phone-play saves and settings.
+
+See [setup, controls, troubleshooting, and the two-Mac test](phonepad/README.md).
+
+### Keyboard and physical gamepads
+
 | Action | Keyboard | DualSense | Xbox |
 |---|---|---|---|
 | Move | WASD | Left stick / D-pad | Left stick / D-pad |
@@ -133,6 +156,12 @@ to Home; connection errors return to Home with a diagnostic.
 Two isolated local peers have passed compatibility checks, Ready/Start, native
 boot, and over 300 rendered frames each near 60 FPS. **Full matches across separate
 computers and internet latency behavior remain unverified.**
+
+The combined phone/netplay launcher has also passed a two-peer local smoke test:
+paired WebSocket input reached each native runtime and both peers exceeded 600
+game frames near 60 FPS. This is startup/input-transport evidence, not verification
+of a full online match. Run it with
+`private/phonepad-venv/bin/python scripts/test_phone_netplay.py` after phone setup.
 
 ## Local data and troubleshooting
 

@@ -8,7 +8,8 @@ import sys
 ROOT=Path(__file__).resolve().parents[1]
 ROOT_FILES={'.gitattributes','.gitignore','README.md','CREDITS.md','CONTRIBUTING.md','LICENSE','Brewfile'}
 ALLOWED={'scripts':{'.py','.sh'},'patches':{'.patch'},'config':{'.ini'},
-         'tests':{'.py'},'macos':{'.c','.inc','.md'},'.github':{'.yml','.yaml'}}
+         'tests':{'.py'},'macos':{'.c','.inc','.md'},'.github':{'.yml','.yaml'},
+         'phonepad':{'.py','.c','.html','.txt','.md'},'docs':{'.md'}}
 paths=subprocess.check_output(['git','ls-files','-z'],cwd=ROOT).decode().split('\0')
 errors=[]
 for name in filter(None,paths):

@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+<link rel="icon" href="data:,">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>GC Pad</title>
+<style>
+  :root {
+    --bg: #191b2a; --panel: #23263a; --panel-2: #2b2f47; --edge: #32364f;
+    --ink: #ecedf5; --dim: #8b90ad;
+    --a: #4aa88a; --b: #c0504a; --xy: #9aa0c8; --z: #7b7fe0; --c: #d8b04a;
+    --live: #4ade80; --dead: #ef6a5a;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink);
+    font: 700 14px/1.2 ui-rounded, -apple-system, system-ui, sans-serif;
+    touch-action: none; user-select: none; -webkit-user-select: none;
+    overscroll-behavior: none;
+  }
+
+  /* ---------- gate ---------- */
+  #gate {
+    position: fixed; inset: 0; z-index: 20; background: var(--bg);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 1.1rem; padding: 1.5rem; text-align: center;
+  }
+  #gate h1 { margin: 0; font-size: 1.4rem; letter-spacing: -.02em; }
+  #gate p { margin: 0; color: var(--dim); max-width: 30ch; font-weight: 500; font-size: .9rem; }
+  select, button.big {
+    font: inherit; font-size: 1.05rem; color: var(--ink); background: var(--panel);
+    border: 1px solid var(--edge); border-radius: 10px; padding: .75rem 1.3rem; min-width: 12rem;
+  }
+  button.big { background: #4f57d8; border-color: #4f57d8; }
+  button.big:active { transform: scale(.98); }
+  #err { color: var(--dead); font-weight: 600; min-height: 1.2em; font-size: .85rem; }
+
+  /* Portrait cannot hold two sticks plus eight buttons. Refuse it. */
+  #portrait { display: none; }
+  @media (orientation: portrait) {
+    #portrait {
+      position: fixed; inset: 0; z-index: 30; background: var(--bg);
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: .9rem; padding: 2rem; text-align: center;
+    }
+    #portrait .glyph { font-size: 2.8rem; line-height: 1; }
+    #portrait h2 { margin: 0; font-size: 1.2rem; }
+    #portrait p { margin: 0; color: var(--dim); font-weight: 500; max-width: 24ch; }
+    #gate, #pad, #hud { display: none !important; }
+  }
+
+  /* ---------- hud ---------- */
+  #hud {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+    display: flex; align-items: center; gap: .45rem;
+    padding: max(.25rem, env(safe-area-inset-top)) .7rem .15rem;
+    font-size: .68rem; color: var(--dim); font-weight: 600;
+  }
+  #dot { width: .5rem; height: .5rem; border-radius: 50%; background: var(--dead); }
+  #dot.on { background: var(--live); }
+  #tele { margin-left: auto; font-variant-numeric: tabular-nums; font-size: .64rem; font-weight: 500; }
+
+  /* ---------- pad ---------- */
+  #pad {
+    position: fixed;
+    top: 1.35rem; bottom: env(safe-area-inset-bottom);
+    left: env(safe-area-inset-left); right: env(safe-area-inset-right);
+    display: grid;
+    grid-template-rows: 3rem 1fr;
+    gap: .4rem; padding: .4rem;
+  }
+
+  /* shoulder row: index fingers, where real shoulder buttons live */
+  #top { display: grid; grid-template-columns: 1fr 1fr 1fr .8fr; gap: .4rem; }
+
+  #lower { display: grid; grid-template-columns: 1.15fr 1fr; gap: .5rem; min-height: 0; }
+
+  .btn {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: var(--panel); border: 1px solid var(--edge); border-radius: 12px;
+    font-size: 1rem;
+  }
+  .btn small { font-size: .56rem; font-weight: 500; color: var(--dim); margin-top: .08rem; }
+  .btn:active, .btn.hit { background: var(--panel-2); border-color: currentColor; filter: brightness(1.45); }
+  .btn.lr { color: var(--xy); } .btn.z { color: var(--z); }
+  .btn.start { color: var(--dim); font-size: .75rem; }
+
+  /* control stick */
+  #main {
+    position: relative; background: var(--panel);
+    border: 1px solid var(--edge); border-radius: 18px; overflow: hidden;
+  }
+  #main .lbl {
+    position: absolute; top: .4rem; left: .6rem; font-size: .58rem;
+    color: var(--dim); font-weight: 600; letter-spacing: .07em; text-transform: uppercase;
+  }
+  #main.live { border-color: #4f57d8; }
+  .nub {
+    position: absolute; width: 3.4rem; height: 3.4rem; margin: -1.7rem 0 0 -1.7rem;
+    border-radius: 50%; background: #4f57d8; border: 2px solid #7a80f0;
+    left: 50%; top: 50%; pointer-events: none;
+  }
+
+  /* right side: C-stick diamond above the face cluster */
+  #rightcol { display: grid; grid-template-rows: 1fr 1.25fr; gap: .5rem; min-height: 0; }
+
+  /* C-stick as four discrete directions: that is how Melee uses it
+     (smashes and aerials), and discrete targets beat a tiny analog well. */
+  #cpad {
+    display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr);
+    gap: .25rem;
+  }
+  #cpad .btn { color: var(--c); font-size: .8rem; border-radius: 10px; }
+  #cpad .lbl {
+    grid-area: 2 / 2; display: flex; align-items: center; justify-content: center;
+    font-size: .5rem; color: var(--dim); font-weight: 600; letter-spacing: .06em;
+  }
+  #cpad .cu { grid-area: 1 / 2; } #cpad .cd { grid-area: 3 / 2; }
+  #cpad .cl { grid-area: 2 / 1; } #cpad .cr { grid-area: 2 / 3; }
+
+  /* face cluster: A dominant, like the real controller */
+  #face { display: grid; grid-template-columns: 1fr 1.6fr; grid-template-rows: 1fr 1fr; gap: .35rem; }
+  #face .a { grid-area: 1 / 2 / 3 / 3; font-size: 1.7rem; color: var(--a); border-radius: 50%; }
+  #face .b { grid-area: 2 / 1; color: var(--b); }
+  #face .x { grid-area: 1 / 1; color: var(--xy); }
+</style>
+</head>
+<body>
+
+<div id="gate">
+  <h1>GameCube Pad</h1>
+  <p>Open the pairing link from your Mac. Each local player chooses a different phone port.</p>
+  <select id="slot">
+    <option value="0">Port 1</option><option value="1">Port 2</option>
+    <option value="2">Port 3</option><option value="3">Port 4</option>
+  </select>
+  <button class="big" id="go">Connect</button>
+  <div id="err"></div>
+</div>
+
+<div id="portrait">
+  <div class="glyph">&#8635;</div>
+  <h2>Rotate your phone</h2>
+  <p>The GameCube pad needs landscape. Turn sideways to play.</p>
+</div>
+
+<div id="hud"><span id="dot"></span><span id="who">&mdash;</span><span id="tele"></span></div>
+
+<div id="pad">
+  <div id="top">
+    <div class="btn lr" data-axis="l">L<small>shield</small></div>
+    <div class="btn z"  data-bit="16">Z<small>grab</small></div>
+    <div class="btn lr" data-axis="r">R<small>shield</small></div>
+    <div class="btn start" data-bit="32">START</div>
+  </div>
+
+  <div id="lower">
+    <div id="main"><span class="lbl">Control stick</span><div class="nub"></div></div>
+
+    <div id="rightcol">
+      <div id="cpad">
+        <span class="lbl">C</span>
+        <div class="btn cu" data-cy="1">&#9650;<small>up smash</small></div>
+        <div class="btn cd" data-cy="-1">&#9660;<small>down</small></div>
+        <div class="btn cl" data-cx="-1">&#9664;</div>
+        <div class="btn cr" data-cx="1">&#9654;</div>
+      </div>
+      <div id="face">
+        <div class="btn a" data-bit="1">A</div>
+        <div class="btn b" data-bit="2">B<small>special</small></div>
+        <div class="btn x" data-bit="4">X<small>jump</small></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const RATE_MS = 16;   // ~60 Hz ceiling
+  const DEAD = 0.06;    // release-jitter floor
+
+  // Full-deflection travel in px. The stick is relative to wherever the thumb
+  // lands, so this is thumb travel, not well size.
+  const REACH = () => Math.max(80, Math.min(innerWidth, innerHeight) * 0.30);
+
+  let ws = null, port = 0, buttons = 0, lastSent = "", connected = false;
+  let lastTime = 0, retry = null, rejected = false;
+  const token = location.hash.slice(1);
+  const online = new URLSearchParams(location.search).get("players") === "1";
+  const axes = { x: 0, y: 0, cx: 0, cy: 0, l: 0, r: 0 };
+
+  const el = id => document.getElementById(id);
+  const dot = el("dot"), tele = el("tele"), err = el("err");
+  if (online) {
+    el("slot").innerHTML = '<option value="0">My phone</option>';
+    document.querySelector("#gate p").textContent = "Connect to your own Mac. The game lobby assigns your match player number.";
+  }
+  const clamp = v => v < -1 ? -1 : v > 1 ? 1 : v;
+
+  // ---- control stick: relative to touch-down, snaps back on release ----
+  function wireStick() {
+    const well = el("main"), nub = well.querySelector(".nub");
+    let id = null, ox = 0, oy = 0;
+
+    const place = t => {
+      const reach = REACH();
+      let nx = clamp((t.clientX - ox) / reach);
+      let ny = clamp((t.clientY - oy) / reach);
+      const mag = Math.hypot(nx, ny);
+      if (mag > 1) { nx /= mag; ny /= mag; }   // a real stick cannot exceed full tilt
+      axes.x = Math.abs(nx) < DEAD ? 0 : nx;
+      axes.y = Math.abs(ny) < DEAD ? 0 : -ny;  // screen Y is down, GC stick Y is up
+      nub.style.left = (50 + nx * 50) + "%";
+      nub.style.top  = (50 + ny * 50) + "%";
+      send();                       // do not wait for the next tick
+    };
+
+    const reset = () => {
+      axes.x = axes.y = 0;
+      nub.style.left = "50%"; nub.style.top = "50%";
+      well.classList.remove("live");
+      send();                       // release must land immediately too
+    };
+
+    well.addEventListener("touchstart", e => {
+      e.preventDefault();
+      const t = e.changedTouches[0];
+      id = t.identifier; ox = t.clientX; oy = t.clientY;
+      well.classList.add("live");
+      place(t);
+    }, { passive: false });
+
+    well.addEventListener("touchmove", e => {
+      e.preventDefault();
+      for (const t of e.changedTouches) if (t.identifier === id) place(t);
+    }, { passive: false });
+
+    const end = e => {
+      e.preventDefault();
+      for (const t of e.changedTouches) if (t.identifier === id) { id = null; reset(); }
+    };
+    well.addEventListener("touchend", end, { passive: false });
+    well.addEventListener("touchcancel", end, { passive: false });
+  }
+
+  // ---- everything else: buttons, trigger axes, C-stick directions ----
+  function wireButton(node) {
+    const bit = node.dataset.bit ? +node.dataset.bit : 0;
+    const axis = node.dataset.axis || null;              // l / r triggers
+    const cx = node.dataset.cx !== undefined ? +node.dataset.cx : null;
+    const cy = node.dataset.cy !== undefined ? +node.dataset.cy : null;
+
+    const set = on => {
+      if (bit) { if (on) buttons |= bit; else buttons &= ~bit; }
+      if (axis) axes[axis] = on ? 1 : 0;
+      if (cx !== null) axes.cx = on ? cx : 0;
+      if (cy !== null) axes.cy = on ? cy : 0;
+      node.classList.toggle("hit", on);
+      send();                       // do not wait for the next tick
+    };
+
+    node.addEventListener("touchstart", e => { e.preventDefault(); set(true); }, { passive: false });
+    node.addEventListener("touchend", e => { e.preventDefault(); set(false); }, { passive: false });
+    node.addEventListener("touchcancel", e => { e.preventDefault(); set(false); }, { passive: false });
+  }
+
+  function send() {
+    if (!ws || ws.readyState !== 1) return;
+    const msg = JSON.stringify({
+      p: port, b: buttons, token,
+      x: +axes.x.toFixed(3), y: +axes.y.toFixed(3),
+      cx: axes.cx, cy: axes.cy,
+      l: axes.l, r: axes.r,
+    });
+    if (msg === lastSent && performance.now() - lastTime < 250) return;
+    if (ws.bufferedAmount > 4096) { resetInput(); ws.close(); return; }
+    ws.send(msg); lastSent = msg; lastTime = performance.now();
+  }
+
+  function resetInput() {
+    buttons = 0;
+    Object.keys(axes).forEach(k => axes[k] = 0);
+    document.querySelectorAll(".hit,.live").forEach(n => n.classList.remove("hit", "live"));
+    const nub = document.querySelector(".nub");
+    nub.style.left = nub.style.top = "50%";
+    lastSent = "";
+  }
+
+  function connect() {
+    clearTimeout(retry);
+    if (document.hidden) return;
+    if (!token) {
+      err.textContent = "Open the full pairing link printed on your Mac, including the part after #.";
+      return;
+    }
+    if (ws) { ws.onclose = null; ws.close(); }
+    resetInput();
+    rejected = false;
+    err.textContent = "Connecting…";
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    const socket = ws = new WebSocket(`${proto}://${location.host}/ws`);
+    const timeout = setTimeout(() => socket.close(), 5000);
+    socket.onopen = () => { lastSent = ""; send(); };
+    socket.onmessage = ev => {
+      let m; try { m = JSON.parse(ev.data); } catch { return; }
+      if (m.err) {
+        rejected = true; connected = false;
+        err.textContent = m.err;
+        el("gate").style.display = "flex";
+        socket.close();
+        return;
+      }
+      if (m.ok) {
+        clearTimeout(timeout);
+        connected = true;
+        dot.classList.add("on");
+        el("gate").style.display = "none";
+        err.textContent = "";
+      }
+    };
+    socket.onerror = () => { err.textContent = "Cannot reach your Mac. Check Wi-Fi, the launcher, and macOS firewall access."; };
+    socket.onclose = () => {
+      clearTimeout(timeout);
+      if (ws !== socket) return;
+      ws = null;
+      resetInput();
+      dot.classList.remove("on");
+      el("gate").style.display = "flex";
+      if (!rejected) err.textContent = connected ? "Connection lost. Reconnecting…" : "Cannot connect. Check Wi-Fi and reopen the current pairing link.";
+      if (connected && !document.hidden && !rejected) retry = setTimeout(connect, 1000);
+    };
+  }
+
+  el("go").addEventListener("click", () => {
+    port = +el("slot").value;
+    el("who").textContent = online ? "My phone" : "Phone " + (port + 1);
+    connect();
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      resetInput(); send();
+      if (ws) ws.close();
+      clearTimeout(retry);
+    } else if (connected) connect();
+  });
+  addEventListener("pagehide", () => { resetInput(); send(); if (ws) ws.close(); });
+
+  wireStick();
+  document.querySelectorAll("[data-bit],[data-axis],[data-cx],[data-cy]").forEach(wireButton);
+  setInterval(() => {
+    tele.textContent = `${axes.x.toFixed(2)},${axes.y.toFixed(2)}`
+      + (axes.cx || axes.cy ? `  C ${axes.cx},${axes.cy}` : "");
+    send();
+  }, RATE_MS);
+})();
+</script>
+</body>
+</html>
